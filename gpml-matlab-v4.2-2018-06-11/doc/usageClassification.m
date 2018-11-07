@@ -5,10 +5,10 @@ clear all, close all
 
 %% SAY WHICH CODE WE WISH TO EXERCISE
 id = [1,1]; % use Gauss/Exact
-id = [1,2; 2,2; 3,2]; % compare Laplace
-id = [1,3; 2,3; 3,3]; % study EP
-id = [1,5; 2,5]; % look into KL (takes quite a while)
-id = [1,4; 2,4; 3,4]; % deal with VB
+% id = [1,2; 2,2; 3,2]; % compare Laplace
+% id = [1,3; 2,3; 3,3]; % study EP
+% id = [1,5; 2,5]; % look into KL (takes quite a while)
+% id = [1,4; 2,4; 3,4]; % deal with VB
 
 seed = 943; randn('seed',seed), rand('seed',seed)
 

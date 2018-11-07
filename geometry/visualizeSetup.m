@@ -33,10 +33,10 @@ function f = visualizeSetup(cfg,anot)
             for i = 1:cfg.n_src
                 
                 
-%                 doa = round(getTrueDOA(cfg.pos_ref(k,:),cfg.source_pos(i,:),cfg.mic_array_rot(k)),2);
-%                 d = round(getDistance(cfg.pos_ref(k,:),cfg.source_pos(i,:)),2);
-%                 text(cfg.source_pos(i,1),cfg.source_pos(i,2)-0.1*k,['Ref ',num2str(k),' $\rho$: ',num2str(d),'m, $\theta$: ',num2str(doa),'$^\circ$'] ,'FontSize',10);
-%                 text(cfg.source_pos(i,1),cfg.source_pos(i,2)-0.1*k,[num2str(i)] ,'FontSize',10);
+                doa = round(getTrueDOA(cfg.pos_ref(k,:),cfg.source_pos(i,:),cfg.mic_array_rot(k)),2);
+                d = round(getDistance(cfg.pos_ref(k,:),cfg.source_pos(i,:)),2);
+                text(cfg.source_pos(i,1),cfg.source_pos(i,2)-0.1*k,['Ref ',num2str(k),' $\rho$: ',num2str(d),'m, $\theta$: ',num2str(doa),'$^\circ$'] ,'FontSize',10);
+                text(cfg.source_pos(i,1),cfg.source_pos(i,2)-0.1*k,[num2str(i)] ,'FontSize',10);
             end
        end
             for i = 1:cfg.n_src

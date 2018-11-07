@@ -8,7 +8,7 @@ cfg.n_mic = 2;
 cfg.pos_ref = [ 3 0.5 1.5; 0.5 3.5 1.5; 3 5.5 1.5; 5.5 3.5 1.5];
 cfg.mic_array_rot = [ 90,0,-90,-180];
 cfg.mic_pos = zeros(cfg.n_mic,3,cfg.n_array);
-% generate mic positions for each array
+% generate mic positions for each node
 for i=1:cfg.n_array
     cfg.mic_pos(:,:,i) = generateSensorArray(cfg.pos_ref(i,:),cfg.n_mic,cfg.d_mic,cfg.mic_array_rot(i));
 end
@@ -19,9 +19,14 @@ cfg.source_pos = [2.9 1.5 1.5; 1.5 2.5 1.5; 4.2 2.5 1.5; 3.35 4 1.5;...
              %; 4.38 4.4 1.5; 1.5 3.9 1.5; 4.33 6 1.5;
                  %3.2 5.5 1.5;1 5.75 1.5];
 %% visualize Room
-visualizeSetup(cfg,1);
+% visualizeSetup(cfg,1);
 %% training & test source signals 
 cfg.sig_len = 3;
+% source_paths:
+% (1) Male1 (2) Male1 (3)Male3 (4) Female1 (5) Female3 (6) Female 4 
+% (7) vaccum cleaner (8) water pouring (9) hair dryer (10) coffee machine
+% (11) keyboard (12) water stir (13) male coughinh (14) male snoring
+% (15) telephone ring
 training_source_path_idx = [10,9,15,5,1,8,13];  %,8,11,7,13,3];
 test_source_path_idx = [2,4,6,12,14,11]; %2,4,6,12,14];
 test_signals = zeros(cfg.fs*cfg.sig_len,10);
@@ -36,6 +41,8 @@ end
 
 %% generate training data
 data = [];
+train_rtf = [];
+test_rtf = [];
 number_training_data = 250;
 true_pos = cfg.source_pos;
 training_snr = zeros(number_training_data,1);
@@ -50,13 +57,14 @@ train_pos_s5 = zeros(number_training_data,2);
 train_pos_s6 = zeros(number_training_data,2);
 
 for i = 1:number_training_data
+    train_i = i
     % introduce some variance to source positions
     %offset = 0.4 +(2*randn(cfg.n_src,2)-1);
     offset = 0.5 *(2*rand(cfg.n_src,2)-1);
     cfg.source_pos(:,1:2) = true_pos(:,1:2) + offset;
     % vary the SNR and T60
     SNR = [-5,0,5,10,15,20,25,30];
-    T60 = 0.4;
+    T60 = 1;
     %T60 = [ 0.25,0.3,0.35,0.4,0.45,0.5];
     T60_idx = randperm(length(T60));
     snr_idx = randperm(length(SNR));
@@ -84,6 +92,7 @@ for i = 1:number_training_data
     vec=[DOAs,Diff,CDR,MSCs,real(PRPs),imag(PRPs),delay];
     vec = vec.';
     data(i,:,:) = vec;
+    train_rtf{i}  = estimateRTF( Xnoisy,cfg );
 end
 
 test_data = [];
@@ -100,12 +109,13 @@ test_pos_s6 = zeros(number_test_data,2);
 
 
 for i = 1:number_test_data
+    test_i = i
     %choose random SNR and T60
     offset = 0.5 *(2*rand(cfg.n_src,2)-1);
     cfg.source_pos(:,1:2) = true_pos(:,1:2) + offset;
     SNR = [-5,0,5,10,15,20,25,30];
     %SNR = [18,25,22];
-    T60 = [0.4];
+    T60 = [1];
     %T60 = [ 0.25,0.3,0.35,0.4,0.45,0.5];
     T60_idx = randperm(length(T60));
     snr_idx = randperm(length(SNR));
@@ -131,49 +141,37 @@ for i = 1:number_test_data
     vec=[DOAs,Diff,CDR,MSCs,real(PRPs),imag(PRPs),delay];
     vec = vec.';
     test_data(i,:,:) = vec;
+    test_rtf{i}  = estimateRTF( Xnoisy,cfg );
 end
 run_time = toc(tstart);
-test_snr = repmat(test_snr,number_test_data,1);
-test_t60 = repmat(test_t60,number_test_data,1);
+test_snr = repmat(test_snr,cfg.n_src,1);
+test_t60 = repmat(test_t60,cfg.n_src,1);
 %test_pos = repmat(test_pos_offset,number_test_data,1);
-training_snr = repmat(training_snr,number_training_data,1);
-training_t60 = repmat(training_t60,number_training_data,1);
+training_snr = repmat(training_snr,cfg.n_src,1);
+training_t60 = repmat(training_t60,cfg.n_src,1);
 %training_pos = repmat(tra_pos_offset,number_training_data,1);
-%% evaluation
-%% select only certain features
-feat_vec = [1:8,13:28];
+%% evaluation part
+% select only certain features
+feat_idx{1} = [1:4];
+feat_idx{2} = [5:8];
+feat_idx{3} = [9:12];
+feat_idx{4} = [13:16];
+feat_idx{5} = [17:24];
+feat_idx{6} = [25:28];
+feat_idx{7} = [1:8];
+acc_complete=[];
+pred_complete=[];
+
+%for p = 1:7
+feat_vec = feat_idx{1};
 mod_data = data(:,feat_vec,:);
 mod_test_data = test_data(:,feat_vec,:);
-% train GMMS 
- maxiter = 1000;
- mu =[];
- sigma = [];
- for q = 1:cfg.n_src
-    tmp = mod_data(:,:,q);
-    [mu(q,:),tsigma] = EM(tmp,1,maxiter);
-    sigma{q}= cell2mat(tsigma);
- end
-% test GMMS
-confusion_matrix = zeros(cfg.n_src,cfg.n_src);
-for q = 1:cfg.n_src
-    tdata = squeeze(mod_test_data(:,:,q));
-    probability_matrix = zeros(cfg.n_src,length(tdata(:,1)));
-    for n = 1:cfg.n_src  
-        probability_matrix(n,:)= gaussianND(tdata, mu(n, :), sigma{n});
-    end
-   [~,ix] = max(probability_matrix,[],1);
-   for i=1:length(ix)
-        confusion_matrix(ix(i),q) = confusion_matrix(ix(i),q) +1 ;
-   end
+ test_data_comp = [];
+  training_data_comp =[];
+for q=1:cfg.n_src
+    training_data_comp = [ training_data_comp;squeeze(mod_data(:,:,q))];
+    test_data_comp = [test_data_comp;squeeze(mod_test_data(:,:,q))];
 end
-
-% plot confusion matrix
-figure('Name','GMM');
-plotConfMat(confusion_matrix, {'1 coffee machine ', '2 hair dryer ', '3 telephone ','4 Female3 ','5 Male1 ','6 water pouring '});
-
-% plotConfMat(confusion_matrix, {'1 coffee machine ', '2 hair dryer ', '3 telephone ','4 Female3 ','5 Male1 ','6 water pouring ','7 keyboard ',...
-%     '8 vacuum cleaner ','9 coughing ','10 Male3 '});
-
 
 
 %% SVM part
@@ -205,7 +203,7 @@ plotConfMat(confusion_matrix, {'1 coffee machine ', '2 hair dryer ', '3 telephon
 
 
 train_label =  ones(length(data),1) * [1:cfg.n_src];
-test_label =  ones(length(tdata),1) * [1:cfg.n_src];
+test_label =  ones(length(test_data),1) * [1:cfg.n_src];
 train_label = train_label(:);
 test_label = test_label(:);
 svm_training_data = [];
@@ -214,54 +212,82 @@ for q=1:cfg.n_src
     svm_training_data = [ svm_training_data;squeeze(mod_data(:,:,q))];
     svm_test_data = [ svm_test_data;squeeze(mod_test_data(:,:,q))];
 end
+
+
+% soft scaling
 % substract mean and 2*standard dev from each feature
 feat_means = mean(svm_training_data);
-feat_stds = 1./(2*std(svm_training_data));
+feat_stds = 1./(2*std(svm_training_data)+eps);
 svm_training_data = (svm_training_data - feat_means).*feat_stds;
 svm_test_data = (svm_test_data - feat_means) .* feat_stds;
 
-% permute test_data 
-rand_train = randperm(length(svm_training_data));
-rand_test = randperm(length(svm_test_data))';
-train_label = train_label(rand_train);
-test_label = test_label(rand_test);
-svm_training_data = svm_training_data(rand_train,:);
-svm_test_data = svm_test_data(rand_test,:);
+% % hard scaling
+% column_min = min(svm_training_data);
+% column_max = max(svm_training_data);
+% svm_training_data = rescale(svm_training_data,'InputMin',column_min,'InputMax',column_max);
+% svm_test_data = rescale(svm_test_data,'InputMin',column_min,'InputMax',column_max);
 
-% parameter tuning, search for best gamma and C -> grid search
-bestmodel = 0;
-model = [];
+% % permute test_data 
+% rand_train = randperm(length(svm_training_data));
+% rand_test = randperm(length(svm_test_data))';
+% train_label = train_label(rand_train);
+% test_label = test_label(rand_test);
+% svm_training_data = svm_training_data(rand_train,:);
+% svm_test_data = svm_test_data(rand_test,:);
 
-for log2c = -5:2:15
-  for log2g = -15:2:13
-    cmd = ['-h 1 -v 5 -c ', num2str(2^log2c), ' -g ', num2str(2^log2g)];
-    model = svmtrain(train_label, svm_training_data, cmd);
-    if (model >= bestmodel)
-      bestmodel = model; 
-      bestc = 2^log2c; 
-      bestg = 2^log2g;
-    end
-    fprintf('%g %g %g (best c=%g, g=%g, rate=%g)\n', log2c, log2g, model, bestc, bestg, bestmodel);
-  end
+
+% confusion_matrix_svm = zeros(cfg.n_src,cfg.n_src);
+% confusion_matrix_svm_lin = zeros(cfg.n_src,cfg.n_src);
+% for i=1:length(pred_svm_rbf)
+%     t = test_label(i);
+%     p = pred_svm_rbf(i);
+%     q = pred_svm_lin(i);
+%     confusion_matrix_svm(p,t) = confusion_matrix_svm(p,t) +1 ;
+%     confusion_matrix_svm_lin(q,t) = confusion_matrix_svm_lin(q,t) +1 ;
+% end
+% figure('Name','SVM RBF KERNEL');
+% plotConfMat(confusion_matrix_svm, {'1 coffee machine ', '2 hair dryer ', '3 telephone ','4 Female3 ','5 Male1 ','6 water pouring '});
+% figure('Name','SVM Linear');
+% plotConfMat(confusion_matrix_svm_lin, {'1 coffee machine ', '2 hair dryer ', '3 telephone ','4 Female3 ','5 Male1 ','6 water pouring '});
+
+% cm =confusionmat(test_label,pred);
+% figure('Name','Confusion Matrix');
+% plotConfmat(cm);
+
+%[pred_lp, acc_lp ] = gp_laplace( train_label, test_label,svm_training_data, svm_test_data );
+%[pred_ep, acc_ep ] = gp_ep( train_label, test_label,svm_training_data, svm_test_data );
+[pred_svm_rbf, acc_svm_rbf] = svm_rbf( train_label, test_label,svm_training_data, svm_test_data );
+[pred_svm_lin, acc_svm_lin ] = svm_lin( train_label, test_label,svm_training_data, svm_test_data );
+[pred_svm_1vsR, acc_svm_1vsR ] = svm_rbf_one_vs_all( train_label, test_label,svm_training_data, svm_test_data );
+[pred_gp, acc_gp ] = gp_classifier(train_label, test_label,svm_training_data, svm_test_data );
+acc_gp
+[pred_gmm, acc_gmm ] = gmm( train_label, test_label,svm_training_data, svm_test_data );
+[pred_gmm2, acc_gmm2 ] = gmm( train_label, test_label,training_data_comp, test_data_comp );
+[pred_gp1vs_all, acc_gp_1vs_all] =gp_classifier_1_vs_all(train_label, test_label,svm_training_data, svm_test_data);
+
+acc = [acc_gmm,acc_svm_lin(1)/100,acc_svm_rbf(1)/100,acc_svm_1vsR,acc_gp,acc_gp_1vs_all];
+pred = [pred_gmm,pred_svm_lin,pred_svm_rbf,pred_svm_1vsR,pred_gp,pred_gp1vs_all];
+
+for k=1:length(acc)
+ idx1 = find(test_snr >=  5);
+ idx2 = find(test_snr <= 0);
+ 
+ acc_subset_high_snr(k) = sum(test_label(idx1) == pred(idx1,k))./ numel(test_label(idx1));
+ acc_subset_low_snr(k) = sum(test_label(idx2) == pred(idx2,k))./ numel(test_label(idx2));
 end
-
-cmd = ['-b 1 -c ', num2str(bestc), ' -g ', num2str(bestg), ];
-
-model_lin = svmtrain(train_label, svm_training_data, '-t 0');
-model = svmtrain(train_label, svm_training_data, cmd);
-[predict_label, accuracy, dec_values] = svmpredict(test_label, svm_test_data, model);
-[predict_label_lin, accuracy_lin, dec_values_lin] = svmpredict(test_label, svm_test_data, model_lin);
-
-confusion_matrix_svm = zeros(cfg.n_src,cfg.n_src);
-confusion_matrix_svm_lin = zeros(cfg.n_src,cfg.n_src);
-for i=1:length(predict_label)
-    t = test_label(i);
-    p = predict_label(i);
-    q = predict_label_lin(i);
-    confusion_matrix_svm(p,t) = confusion_matrix_svm(p,t) +1 ;
-    confusion_matrix_svm_lin(q,t) = confusion_matrix_svm_lin(q,t) +1 ;
-end
-figure('Name','SVM RBF KERNEL');
-plotConfMat(confusion_matrix_svm, {'1 coffee machine ', '2 hair dryer ', '3 telephone ','4 Female3 ','5 Male1 ','6 water pouring '});
-figure('Name','SVM Linear');
-plotConfMat(confusion_matrix_svm_lin, {'1 coffee machine ', '2 hair dryer ', '3 telephone ','4 Female3 ','5 Male1 ','6 water pouring '});
+ acc_complete{p}=[acc;acc_subset_low_snr;acc_subset_high_snr].'
+ pred_complete{p} = pred;
+%end
+% %% visualize with predited label
+% miss_idx = find(test_label ~= pred(:,5));
+% cfg.source_pos = true_pos;
+% setup = visualizeSetup(cfg,1);
+% %colormap([ 1 0 0 ; 1 0.5 1; 1 1 0;  0 1 0; 0 0 1; 0.5 0 1]);
+% colormap(parula(8))
+% cb=colorbar;
+% %set(cb,'YTick',[1:max(test_label)])
+% set(cb,'YTick',[-5:5:30])
+% %cb.Label.String = 'Class label index';
+% cb.Label.String = 'SNR[dB]';
+% test_pos_c = [test_pos_s1;test_pos_s2;test_pos_s3;test_pos_s4;test_pos_s5;test_pos_s6];
+% scatter(test_pos_c(miss_idx,1),test_pos_c(miss_idx,2),10,test_snr(miss_idx));
